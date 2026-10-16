@@ -1,9 +1,12 @@
-// Declarative question sequence + pricing-param builder per product. Add a
-// new entry to `flows` below to wire up another product — engine.js walks
-// `questions` generically, then calls that flow's own buildPriceParams(a) to
-// get the exact params for the live pricing AJAX call, and buildSummary(a,
-// quote) for the order-confirmation message. No per-product branching lives
-// in engine.js — it's all here, declaratively, per flow.
+// Declarative question sequence + pricing per product. Add a new entry to
+// `flows` below to wire up another product — engine.js walks `questions`
+// generically, then calls that flow's own computeQuote(answers) (or, for the
+// live-AJAX flows, buildPriceParams(answers) + getLivePrice()) to get a
+// price, and buildSummary(answers, quote) for the order-confirmation message.
+// No per-product branching lives in engine.js — it's all here, declaratively,
+// per flow.
+
+const { getProductPrice } = require("../services/woocommerce");
 
 const SIZE_OPTIONS = [
   { id: "67", title: "A5" },
@@ -300,9 +303,77 @@ const stickerFlow = {
 };
 
 // ---------------------------------------------------------------------------
+// 5) Manual-quote products — the WCPC configurator is switched OFF on these
+//    (_wcpc_enabled=0) and, checked live, their WC "price" field has no
+//    stated unit anywhere on the product page (no "per 100", "per box",
+//    "per piece", etc.). Naively multiplying that price by a customer-typed
+//    quantity produced a nonsense number in testing (₹277.67 × 500 "cards"
+//    = ₹1,38,835) — these listings simply aren't finished/priced for direct
+//    per-unit sale yet. Rather than guess against a real Razorpay charge,
+//    these take the order spec + file and create a PENDING WooCommerce
+//    order with no price yet, for the team to quote and send a payment
+//    link for manually. Once the site has a real per-unit price for a
+//    product, flip it over to simpleProductFlow (auto price × qty, like the
+//    binding/print products) instead.
+// ---------------------------------------------------------------------------
+function manualQuoteFlow({ key, productId, label }) {
+  return {
+    key,
+    productId,
+    label,
+    requiresManualQuote: true,
+    questions: [
+      { key: "copies", prompt: "How many would you like?", type: "text", parse: positiveInt("quantity", 1) },
+      { key: "file", prompt: "Please upload your print-ready file now (PDF or image).", type: "file" },
+    ],
+  };
+}
+
+// Kept for later use once a product's real per-unit price is confirmed and
+// it should move off manual-quote onto automatic price × quantity pricing.
+function simpleProductFlow({ key, productId, label }) {
+  return {
+    key,
+    productId,
+    label,
+    questions: [
+      { key: "copies", prompt: "How many would you like?", type: "text", parse: positiveInt("quantity", 1) },
+      { key: "file", prompt: "Please upload your print-ready file now (PDF or image).", type: "file" },
+    ],
+    computeQuote: async (a) => {
+      const unitPrice = await getProductPrice(productId);
+      return {
+        unitPrice,
+        total: Math.round(unitPrice * a.copies * 100) / 100,
+      };
+    },
+    buildSummary: (a, quote) => `${a.copies} × ₹${quote.unitPrice} = ₹${quote.total}`,
+  };
+}
+
+const SIMPLE_PRODUCTS = [
+  { key: "business_cards", productId: 15062, label: "Business Cards" },
+  { key: "letter_heads", productId: 15063, label: "Letter Heads" },
+  { key: "envelopes", productId: 15064, label: "Envelopes" },
+  { key: "certificates", productId: 15065, label: "Certificates" },
+  { key: "invitation_cards", productId: 15167, label: "Invitation Cards" },
+  { key: "flyers", productId: 15057, label: "Flyers" },
+  { key: "posters", productId: 15061, label: "Posters" },
+  { key: "brochures", productId: 15059, label: "Brochures" },
+  { key: "danglers", productId: 15058, label: "Danglers" },
+  { key: "custom_paper_box", productId: 15056, label: "Custom Paper Box" },
+  { key: "id_card_rope", productId: 15173, label: "ID Card with Rope & Holder" },
+  { key: "round_badge", productId: 15176, label: "Custom Printed Round Badge" },
+  { key: "custom_shape_flashcards", productId: 15179, label: "Custom Shape Flash Cards" },
+  { key: "flashcards", productId: 15236, label: "Flashcards" },
+  { key: "catalogue", productId: 15235, label: "Catalogue" },
+];
+
+// ---------------------------------------------------------------------------
 
 const flows = {};
 for (const p of BINDING_PRODUCTS) flows[p.key] = bindingFlow(p);
+for (const p of SIMPLE_PRODUCTS) flows[p.key] = manualQuoteFlow(p);
 
 flows.a4_print = a4PrintFlow();
 
@@ -321,32 +392,64 @@ flows.a0_cad_printing = largeFormatFlow({
 
 flows.sticker = stickerFlow;
 
-// All flow keys that should appear as top-level menu entries, grouped for a
-// nicer WhatsApp list (WhatsApp list messages support up to 10 rows per
-// section and multiple sections per message).
-const MENU_SECTIONS = [
+// 25 products total now — far over WhatsApp's 10-row-total-per-message limit
+// for a single list, so the menu is two-tier: a short top-level category
+// list, and each category sends its own product sub-list (each ≤10 rows)
+// when picked. Category ids are prefixed "cat_" so routing can tell a
+// category selection apart from a product selection.
+const CATEGORIES = [
   {
+    id: "cat_binding",
     title: "Binding",
     items: BINDING_PRODUCTS.map((p) => ({ id: p.key, title: p.label.replace("Print with ", "") })),
   },
   {
-    title: "Document Printing",
-    items: [{ id: "a4_print", title: "A4 Document Print" }],
-  },
-  {
-    title: "Large Format",
+    id: "cat_printing",
+    title: "Printing Services",
     items: [
+      { id: "a4_print", title: "A4 Document Print" },
       { id: "a0_image_printing", title: "A0 Image Printing" },
       { id: "a0_cad_printing", title: "A0 CAD/Line Drawing" },
+      { id: "sticker", title: "Stickers" },
     ],
   },
   {
-    title: "Other",
-    items: [{ id: "sticker", title: "Stickers" }],
+    id: "cat_stationery",
+    title: "Business & Stationery",
+    items: [
+      { id: "business_cards", title: "Business Cards" },
+      { id: "letter_heads", title: "Letter Heads" },
+      { id: "envelopes", title: "Envelopes" },
+      { id: "certificates", title: "Certificates" },
+      { id: "invitation_cards", title: "Invitation Cards" },
+    ],
+  },
+  {
+    id: "cat_marketing",
+    title: "Marketing Prints",
+    items: [
+      { id: "flyers", title: "Flyers" },
+      { id: "posters", title: "Posters" },
+      { id: "brochures", title: "Brochures" },
+      { id: "danglers", title: "Danglers" },
+    ],
+  },
+  {
+    id: "cat_specialty",
+    title: "Specialty & Packaging",
+    items: [
+      { id: "custom_paper_box", title: "Custom Paper Box" },
+      { id: "id_card_rope", title: "ID Card with Rope & Holder" },
+      { id: "round_badge", title: "Round Badge" },
+      { id: "custom_shape_flashcards", title: "Custom Shape Flash Cards" },
+      { id: "flashcards", title: "Flashcards" },
+      { id: "catalogue", title: "Catalogue" },
+    ],
   },
 ];
 
 module.exports = flows;
 module.exports.BINDING_PRODUCTS = BINDING_PRODUCTS;
+module.exports.SIMPLE_PRODUCTS = SIMPLE_PRODUCTS;
 module.exports.PAPER_ID_MAP = PAPER_ID_MAP;
-module.exports.MENU_SECTIONS = MENU_SECTIONS;
+module.exports.CATEGORIES = CATEGORIES;

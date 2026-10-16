@@ -4,11 +4,12 @@ const { getSession, saveSession } = require("../services/sessionStore");
 const { sendList, sendText } = require("../services/whatsapp");
 const { startFlow, handleFlowReply, handleFileUpload } = require("../flows/engine");
 const flows = require("../flows/productFlows");
-const { MENU_SECTIONS } = flows;
+const { CATEGORIES } = flows;
 
 // Any key defined in productFlows.js is a valid menu selection — new
 // products just need an entry added there, no change needed here.
 const PRODUCT_KEYS = new Set(Object.keys(flows).filter((k) => flows[k] && flows[k].questions));
+const CATEGORY_BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
 
 // Meta webhook verification (GET)
 router.get("/", (req, res) => {
@@ -70,6 +71,15 @@ async function routeTextOrCommand(phone, session, value) {
     return sendMainMenu(phone);
   }
 
+  // A category selection sends that category's own product sub-list — must
+  // be checked before the idle fallback for the same reason as below.
+  if (CATEGORY_BY_ID.has(value)) {
+    const category = CATEGORY_BY_ID.get(value);
+    saveSession(phone, { step: "idle" });
+    await sendList(phone, `${category.title} — pick one:`, "Choose", category.items);
+    return;
+  }
+
   // A product selection should start its flow regardless of current step —
   // this must be checked before the idle fallback below, otherwise a fresh
   // session (step defaults to "idle") can never progress past the menu.
@@ -99,10 +109,15 @@ async function routeTextOrCommand(phone, session, value) {
 }
 
 async function sendMainMenu(phone) {
-  // WhatsApp list messages cap at 10 rows TOTAL across all sections (not per
-  // section) — MENU_SECTIONS in productFlows.js is kept at exactly that
-  // limit; adding an 11th product needs a row trimmed/merged elsewhere too.
-  await sendList(phone, "What would you like to order?", "Choose", MENU_SECTIONS);
+  // Top-level menu is just the 5 categories (well under WhatsApp's 10-row
+  // cap) — picking one sends that category's own product sub-list, each of
+  // which is also kept at ≤10 rows. 25 products no longer fit in one list.
+  await sendList(
+    phone,
+    "What would you like to order?",
+    "Choose",
+    CATEGORIES.map((c) => ({ id: c.id, title: c.title }))
+  );
 }
 
 module.exports = router;

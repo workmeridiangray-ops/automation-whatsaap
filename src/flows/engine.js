@@ -96,20 +96,61 @@ async function handleFileUpload(phone, session, mediaId, mimeType) {
   await finalizeQuote(phone);
 }
 
+// Every flow provides computeQuote(answers) -> quote object with at least
+// .total. The two kinds in use:
+//   - AJAX-priced flows (buildPriceParams defined): computeQuote calls the
+//     site's own live pricing calculator via getLivePrice().
+//   - Flat WC-price flows (computeQuote defined directly, e.g. simple fixed-
+//     price products): just reads the product's current WooCommerce price.
+// Either way engine.js doesn't need to know which kind it's dealing with.
+async function computeQuote(flow, answers) {
+  if (flow.computeQuote) return flow.computeQuote(answers);
+  if (flow.buildPriceParams) return getLivePrice(flow.buildPriceParams(answers));
+  throw new Error(`Flow has neither computeQuote nor buildPriceParams — can't price this order.`);
+}
+
+// Resolves which WooCommerce product id a completed order should be filed
+// against. Defaults to the flow's static productId; a flow whose product
+// depends on an answer (e.g. a4_print's ink-type choice) overrides this.
+function resolveProductId(flow, answers) {
+  if (flow.resolveProductId) return flow.resolveProductId(answers);
+  if (flow.buildPriceParams) return flow.buildPriceParams(answers).pid;
+  return flow.productId;
+}
+
 async function finalizeQuote(phone) {
   const session = require("../services/sessionStore").getSession(phone);
   const flow = flows[session.productKey];
   const a = session.answers;
 
-  if (!flow.buildPriceParams) {
-    console.error(`Flow "${session.productKey}" has no buildPriceParams — can't price this order.`);
-    await sendText(phone, "⚠️ Sorry, something's misconfigured on our end. We'll follow up with you directly.");
+  // Some products (requiresManualQuote: true) don't have a trustworthy
+  // per-unit price to compute from yet — their WC listing has no stated
+  // unit (per piece? per box of 100? per pack?), so multiplying a raw price
+  // by a customer-entered quantity can produce a wildly wrong number. For
+  // those, skip auto-pricing and Razorpay entirely: file the order spec as
+  // a pending WooCommerce order for a human to price and send a payment
+  // link for, rather than guessing against a real charge.
+  if (flow.requiresManualQuote) {
+    const order = await createOrder({
+      phone,
+      productId: flow.productId,
+      lineItemName: flow.label,
+      total: 0,
+      meta: a,
+      wpAttachmentId: session.wpAttachmentId,
+    });
+    saveSession(phone, { step: "done" });
+    await sendText(
+      phone,
+      `Thanks! We've got your ${flow.label} order details (order #${order.id}) and your file.\n` +
+        `Our team will confirm the price and send you a payment link shortly.`
+    );
     return;
   }
 
   let quote;
   try {
-    quote = await getLivePrice(flow.buildPriceParams(a));
+    quote = await computeQuote(flow, a);
   } catch (err) {
     await sendText(
       phone,
@@ -144,12 +185,7 @@ async function completeOrderAfterPayment(phone) {
   const flow = flows[session.productKey];
   const a = session.answers;
 
-  // Resolve the real WooCommerce product id from the final answers rather
-  // than a static flow.productId — needed because a4_print covers two
-  // different WC products (Color 12958 / B&W 12953) picked by an in-flow
-  // answer, so the only reliable source is the same buildPriceParams(a)
-  // call already used to price the order.
-  const resolvedProductId = flow.buildPriceParams(a).pid;
+  const resolvedProductId = resolveProductId(flow, a);
 
   const order = await createOrder({
     phone,
