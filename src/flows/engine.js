@@ -5,6 +5,7 @@ const { getLivePrice } = require("../services/livePricing");
 const { createPaymentLink } = require("../services/razorpay");
 const { createOrder } = require("../services/woocommerce");
 const { handleIncomingFile } = require("./fileHandler");
+const { ManualQuoteNeededError } = require("./errors");
 
 async function askQuestion(phone, flowKey, question) {
   if (question.type === "buttons") {
@@ -123,35 +124,36 @@ async function finalizeQuote(phone) {
   const flow = flows[session.productKey];
   const a = session.answers;
 
-  // Some products (requiresManualQuote: true) don't have a trustworthy
-  // per-unit price to compute from yet — their WC listing has no stated
-  // unit (per piece? per box of 100? per pack?), so multiplying a raw price
-  // by a customer-entered quantity can produce a wildly wrong number. For
-  // those, skip auto-pricing and Razorpay entirely: file the order spec as
-  // a pending WooCommerce order for a human to price and send a payment
-  // link for, rather than guessing against a real charge.
-  if (flow.requiresManualQuote) {
-    const order = await createOrder({
-      phone,
-      productId: flow.productId,
-      lineItemName: flow.label,
-      total: 0,
-      meta: a,
-      wpAttachmentId: session.wpAttachmentId,
-    });
-    saveSession(phone, { step: "done" });
-    await sendText(
-      phone,
-      `Thanks! We've got your ${flow.label} order details (order #${order.id}) and your file.\n` +
-        `Our team will confirm the price and send you a payment link shortly.`
-    );
-    return;
-  }
-
   let quote;
   try {
     quote = await computeQuote(flow, a);
   } catch (err) {
+    if (err instanceof ManualQuoteNeededError) {
+      // The product's live WooCommerce price still matches the known
+      // placeholder snapshot — nobody has set a real per-unit price yet.
+      // File the order spec as a pending order for a human to quote,
+      // rather than guessing against a real Razorpay charge. The moment
+      // the price on the site actually changes, computeQuote stops
+      // throwing this and starts auto-pricing instead — no code change
+      // or redeploy needed on this end.
+      const order = await createOrder({
+        phone,
+        productId: resolveProductId(flow, a),
+        lineItemName: flow.label,
+        total: 0,
+        meta: a,
+        wpAttachmentId: session.wpAttachmentId,
+      });
+      saveSession(phone, { step: "done" });
+      await sendText(
+        phone,
+        `Thanks! We've got your ${flow.label} order details (order #${order.id}) and your file.\n` +
+          `Our team will confirm the price and send you a payment link shortly.`
+      );
+      console.log("Manual quote needed:", err.message);
+      return;
+    }
+
     await sendText(
       phone,
       "⚠️ Sorry, I couldn't get a price for that combination right now. Type \"menu\" to try again, or we'll follow up with you directly."

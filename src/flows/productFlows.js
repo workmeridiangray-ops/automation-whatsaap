@@ -303,35 +303,46 @@ const stickerFlow = {
 };
 
 // ---------------------------------------------------------------------------
-// 5) Manual-quote products — the WCPC configurator is switched OFF on these
-//    (_wcpc_enabled=0) and, checked live, their WC "price" field has no
-//    stated unit anywhere on the product page (no "per 100", "per box",
-//    "per piece", etc.). Naively multiplying that price by a customer-typed
-//    quantity produced a nonsense number in testing (₹277.67 × 500 "cards"
-//    = ₹1,38,835) — these listings simply aren't finished/priced for direct
-//    per-unit sale yet. Rather than guess against a real Razorpay charge,
-//    these take the order spec + file and create a PENDING WooCommerce
-//    order with no price yet, for the team to quote and send a payment
-//    link for manually. Once the site has a real per-unit price for a
-//    product, flip it over to simpleProductFlow (auto price × qty, like the
-//    binding/print products) instead.
+// 5) Auto-or-manual products — the WCPC configurator is switched OFF on
+//    these (_wcpc_enabled=0) and, checked live on 2026-10-17, their WC
+//    "price" field had no stated unit anywhere on the product page (no
+//    "per 100", "per box", "per piece", etc.). Naively multiplying that
+//    price by a customer-typed quantity produced a nonsense number in
+//    testing (₹277.67 × 500 "cards" = ₹1,38,835) — not safe to charge a
+//    real customer. BASELINE_PRICES below is a snapshot of that known-bad
+//    placeholder price for each one, taken the same day.
+//
+//    This flow self-upgrades with NO code change or redeploy needed: every
+//    time an order comes in, it fetches the product's CURRENT live price
+//    from WooCommerce and compares it to the snapshot. Unchanged -> still
+//    nobody has set a real price, so it falls back to a manual-quote order
+//    (no auto-pricing, no Razorpay link — a human quotes it). Changed (any
+//    different value) -> that's a deliberate price edit on the site, so it
+//    auto-prices as price × quantity from then on, same as the other
+//    simple products. So: fix a price on the website, and the very next
+//    WhatsApp order for that product uses it automatically.
 // ---------------------------------------------------------------------------
-function manualQuoteFlow({ key, productId, label }) {
-  return {
-    key,
-    productId,
-    label,
-    requiresManualQuote: true,
-    questions: [
-      { key: "copies", prompt: "How many would you like?", type: "text", parse: positiveInt("quantity", 1) },
-      { key: "file", prompt: "Please upload your print-ready file now (PDF or image).", type: "file" },
-    ],
-  };
-}
+const BASELINE_PRICES = {
+  15062: 277.67, // Business Cards
+  15063: 364.5, // Letter Heads
+  15064: 431.5, // Envelopes
+  15065: 323.15, // Certificates
+  15167: 900.0, // Invitation Cards
+  15057: 162.12, // Flyers
+  15061: 344.09, // Posters
+  15059: 530.34, // Brochures
+  15058: 409.05, // Danglers
+  15056: 251.2, // Custom Paper Box
+  15173: 10000.0, // ID Card with Rope & Holder
+  15176: 2000.0, // Custom Printed Round Badge
+  15179: 50.0, // Custom Shape Flash Cards
+  15236: 409.05, // Flashcards
+  15235: 159.07, // Catalogue
+};
 
-// Kept for later use once a product's real per-unit price is confirmed and
-// it should move off manual-quote onto automatic price × quantity pricing.
-function simpleProductFlow({ key, productId, label }) {
+const { ManualQuoteNeededError } = require("./errors");
+
+function autoOrManualFlow({ key, productId, label }) {
   return {
     key,
     productId,
@@ -342,6 +353,12 @@ function simpleProductFlow({ key, productId, label }) {
     ],
     computeQuote: async (a) => {
       const unitPrice = await getProductPrice(productId);
+      const baseline = BASELINE_PRICES[productId];
+      if (baseline !== undefined && Math.abs(unitPrice - baseline) < 0.005) {
+        throw new ManualQuoteNeededError(
+          `Product ${productId} still has its placeholder price (₹${baseline}) — not set for sale yet.`
+        );
+      }
       return {
         unitPrice,
         total: Math.round(unitPrice * a.copies * 100) / 100,
@@ -373,7 +390,7 @@ const SIMPLE_PRODUCTS = [
 
 const flows = {};
 for (const p of BINDING_PRODUCTS) flows[p.key] = bindingFlow(p);
-for (const p of SIMPLE_PRODUCTS) flows[p.key] = manualQuoteFlow(p);
+for (const p of SIMPLE_PRODUCTS) flows[p.key] = autoOrManualFlow(p);
 
 flows.a4_print = a4PrintFlow();
 
