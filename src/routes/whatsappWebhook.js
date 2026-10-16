@@ -41,9 +41,10 @@ router.post("/", async (req, res) => {
       await routeTextOrCommand(phone, session, reply);
     } else if (message.type === "document" || message.type === "image") {
       const mediaId = message.document?.id || message.image?.id;
+      const mimeType = message.document?.mime_type || message.image?.mime_type;
       if (session.step === "awaiting_file") {
-        console.log(`Accepting file upload, mediaId=${mediaId}`);
-        await handleFileUpload(phone, session, mediaId);
+        console.log(`Accepting file upload, mediaId=${mediaId}, mimeType=${mimeType}`);
+        await handleFileUpload(phone, session, mediaId, mimeType);
       } else {
         console.log(`Rejecting file upload — session.step was "${session.step}", not "awaiting_file"`);
         await sendText(phone, "I wasn't expecting a file right now — type \"menu\" to start an order.");

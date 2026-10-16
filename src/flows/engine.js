@@ -81,8 +81,17 @@ async function handleFlowReply(phone, session, rawValue) {
   }
 }
 
-async function handleFileUpload(phone, session, mediaId) {
-  const wpAttachmentId = await handleIncomingFile(mediaId);
+async function handleFileUpload(phone, session, mediaId, mimeType) {
+  let wpAttachmentId;
+  try {
+    wpAttachmentId = await handleIncomingFile(mediaId, mimeType);
+  } catch (err) {
+    // Unsupported file type etc. — tell the customer plainly and leave them
+    // in awaiting_file so they can just send a different file, rather than
+    // silently failing or bouncing them back to the main menu.
+    await sendText(phone, `⚠️ ${err.message}`);
+    return;
+  }
   saveSession(phone, { fileMediaId: mediaId, wpAttachmentId, answers: { ...session.answers, file: true } });
   await finalizeQuote(phone);
 }
