@@ -50,16 +50,16 @@ router.post("/", async (req, res) => {
 });
 
 async function routeTextOrCommand(phone, session, value) {
-  if (value.toLowerCase() === "menu" || session.step === "idle") {
+  // Explicit "menu" command always shows the product list.
+  if (value.toLowerCase() === "menu") {
     saveSession(phone, { step: "idle" });
-    await sendList(phone, "What would you like to order?", "Choose", [
-      { id: "perfect_binding", title: "Perfect Binding" },
-      // add more rows here as more products are wired into flows/productFlows.js
-    ]);
-    return;
+    return sendMainMenu(phone);
   }
 
-  if (session.step === "idle" || value === "perfect_binding") {
+  // A product selection should start its flow regardless of current step —
+  // this must be checked before the idle fallback below, otherwise a fresh
+  // session (step defaults to "idle") can never progress past the menu.
+  if (value === "perfect_binding") {
     await startFlow(phone, "perfect_binding");
     return;
   }
@@ -79,7 +79,16 @@ async function routeTextOrCommand(phone, session, value) {
     return;
   }
 
-  await sendText(phone, "Type \"menu\" to start a new order.");
+  // Idle session with unrecognized input (e.g. "hi") -> show the menu.
+  saveSession(phone, { step: "idle" });
+  return sendMainMenu(phone);
+}
+
+async function sendMainMenu(phone) {
+  await sendList(phone, "What would you like to order?", "Choose", [
+    { id: "perfect_binding", title: "Perfect Binding" },
+    // add more rows here as more products are wired into flows/productFlows.js
+  ]);
 }
 
 module.exports = router;
