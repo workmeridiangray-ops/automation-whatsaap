@@ -3,6 +3,9 @@ const router = express.Router();
 const { getSession, saveSession } = require("../services/sessionStore");
 const { sendList, sendText } = require("../services/whatsapp");
 const { startFlow, handleFlowReply, handleFileUpload } = require("../flows/engine");
+const { BINDING_PRODUCTS } = require("../flows/productFlows");
+
+const PRODUCT_KEYS = new Set(BINDING_PRODUCTS.map((p) => p.key));
 
 // Meta webhook verification (GET)
 router.get("/", (req, res) => {
@@ -67,8 +70,8 @@ async function routeTextOrCommand(phone, session, value) {
   // A product selection should start its flow regardless of current step —
   // this must be checked before the idle fallback below, otherwise a fresh
   // session (step defaults to "idle") can never progress past the menu.
-  if (value === "perfect_binding") {
-    await startFlow(phone, "perfect_binding");
+  if (PRODUCT_KEYS.has(value)) {
+    await startFlow(phone, value);
     return;
   }
 
@@ -93,10 +96,15 @@ async function routeTextOrCommand(phone, session, value) {
 }
 
 async function sendMainMenu(phone) {
-  await sendList(phone, "What would you like to order?", "Choose", [
-    { id: "perfect_binding", title: "Perfect Binding" },
-    // add more rows here as more products are wired into flows/productFlows.js
-  ]);
+  // WhatsApp interactive list messages support up to 10 rows — fine for now
+  // with 6 binding products; if more products are added beyond that, this
+  // will need to split into sections or a two-step category menu.
+  await sendList(
+    phone,
+    "What would you like to order?",
+    "Choose",
+    BINDING_PRODUCTS.map((p) => ({ id: p.key, title: p.label.replace("Print with ", "") }))
+  );
 }
 
 module.exports = router;

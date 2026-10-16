@@ -1,7 +1,7 @@
 const { sendText, sendButtons, sendList } = require("../services/whatsapp");
 const { saveSession } = require("../services/sessionStore");
 const flows = require("./productFlows");
-const { quotePerfectBinding } = require("../services/pricing");
+const { getLivePrice } = require("../services/livePricing");
 const { createPaymentLink } = require("../services/razorpay");
 const { createOrder } = require("../services/woocommerce");
 const { handleIncomingFile } = require("./fileHandler");
@@ -101,15 +101,27 @@ async function finalizeQuote(phone) {
   const flow = flows[session.productKey];
   const a = session.answers;
 
-  if (session.productKey === "perfect_binding") {
+  if (flow.isBindingProduct) {
     const paperId = flows.PAPER_ID_MAP[a.paperKey];
-    const quote = await quotePerfectBinding({
-      sizeId: a.sizeId,
-      paperId,
-      pages: a.pages,
-      copies: a.copies,
-      laminationId: a.laminationId,
-    });
+
+    let quote;
+    try {
+      quote = await getLivePrice({
+        pid: flow.productId,
+        sizeId: a.sizeId,
+        paperId,
+        pages: a.pages,
+        qty: a.copies,
+        coverBindingId: a.laminationId,
+      });
+    } catch (err) {
+      await sendText(
+        phone,
+        "⚠️ Sorry, I couldn't get a price for that combination right now. Type \"menu\" to try again, or we'll follow up with you directly."
+      );
+      console.error("Live pricing error:", err);
+      return;
+    }
 
     saveSession(phone, { step: "quoted", quote });
 
@@ -118,7 +130,7 @@ async function finalizeQuote(phone) {
       `Your order — ${flow.label}\n` +
         `Size: ${a.sizeId}, Paper: ${a.paperKey}\n` +
         `${a.pages} pages × ${a.copies} copies\n` +
-        `Cover finish: ${a.laminationId === 75 ? "300gsm Glossy" : "300gsm Matt"}\n\n` +
+        `Cover finish: ${quote.coverLabel || (a.laminationId === 75 ? "300gsm Glossy" : "300gsm Matt")}\n\n` +
         `Total: ₹${quote.total}\n\nGenerating your payment link...`
     );
 
