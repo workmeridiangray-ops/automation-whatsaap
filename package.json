@@ -1,0 +1,17 @@
+{
+  "name": "onlineprintingz-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp ordering bot for onlineprintingz.in - product selection, file upload, live pricing, Razorpay payment, WooCommerce order creation",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.0",
+    "mysql2": "^3.11.0",
+    "razorpay": "^2.9.4"
+  }
+}
