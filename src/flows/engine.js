@@ -101,49 +101,41 @@ async function finalizeQuote(phone) {
   const flow = flows[session.productKey];
   const a = session.answers;
 
-  if (flow.isBindingProduct) {
-    const paperId = flows.PAPER_ID_MAP[a.paperKey];
+  if (!flow.buildPriceParams) {
+    console.error(`Flow "${session.productKey}" has no buildPriceParams — can't price this order.`);
+    await sendText(phone, "⚠️ Sorry, something's misconfigured on our end. We'll follow up with you directly.");
+    return;
+  }
 
-    let quote;
-    try {
-      quote = await getLivePrice({
-        pid: flow.productId,
-        sizeId: a.sizeId,
-        paperId,
-        pages: a.pages,
-        qty: a.copies,
-        coverBindingId: a.laminationId,
-      });
-    } catch (err) {
-      await sendText(
-        phone,
-        "⚠️ Sorry, I couldn't get a price for that combination right now. Type \"menu\" to try again, or we'll follow up with you directly."
-      );
-      console.error("Live pricing error:", err);
-      return;
-    }
-
-    saveSession(phone, { step: "quoted", quote });
-
+  let quote;
+  try {
+    quote = await getLivePrice(flow.buildPriceParams(a));
+  } catch (err) {
     await sendText(
       phone,
-      `Your order — ${flow.label}\n` +
-        `Size: ${a.sizeId}, Paper: ${a.paperKey}\n` +
-        `${a.pages} pages × ${a.copies} copies\n` +
-        `Cover finish: ${quote.coverLabel || (a.laminationId === 75 ? "300gsm Glossy" : "300gsm Matt")}\n\n` +
-        `Total: ₹${quote.total}\n\nGenerating your payment link...`
+      "⚠️ Sorry, I couldn't get a price for that combination right now. Type \"menu\" to try again, or we'll follow up with you directly."
     );
-
-    const link = await createPaymentLink({
-      amountRupees: quote.total,
-      description: `${flow.label} — ${a.pages}pg x ${a.copies}`,
-      phone,
-      referenceId: `${phone}-${Date.now()}`,
-    });
-
-    saveSession(phone, { razorpayLinkId: link.id, step: "awaiting_payment" });
-    await sendText(phone, `Pay here to confirm your order:\n${link.short_url}`);
+    console.error("Live pricing error:", err);
+    return;
   }
+
+  saveSession(phone, { step: "quoted", quote });
+
+  const summary = flow.buildSummary ? flow.buildSummary(a, quote) : "";
+  await sendText(
+    phone,
+    `Your order — ${flow.label}\n${summary}\n\nTotal: ₹${quote.total}\n\nGenerating your payment link...`
+  );
+
+  const link = await createPaymentLink({
+    amountRupees: quote.total,
+    description: `${flow.label} — order ${new Date().toISOString()}`,
+    phone,
+    referenceId: `${phone}-${Date.now()}`,
+  });
+
+  saveSession(phone, { razorpayLinkId: link.id, step: "awaiting_payment" });
+  await sendText(phone, `Pay here to confirm your order:\n${link.short_url}`);
 }
 
 // Called by the Razorpay webhook once payment is confirmed
@@ -152,9 +144,16 @@ async function completeOrderAfterPayment(phone) {
   const flow = flows[session.productKey];
   const a = session.answers;
 
+  // Resolve the real WooCommerce product id from the final answers rather
+  // than a static flow.productId — needed because a4_print covers two
+  // different WC products (Color 12958 / B&W 12953) picked by an in-flow
+  // answer, so the only reliable source is the same buildPriceParams(a)
+  // call already used to price the order.
+  const resolvedProductId = flow.buildPriceParams(a).pid;
+
   const order = await createOrder({
     phone,
-    productId: flow.productId,
+    productId: resolvedProductId,
     lineItemName: flow.label,
     total: session.quote.total,
     meta: a,

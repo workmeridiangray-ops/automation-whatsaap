@@ -3,9 +3,12 @@ const router = express.Router();
 const { getSession, saveSession } = require("../services/sessionStore");
 const { sendList, sendText } = require("../services/whatsapp");
 const { startFlow, handleFlowReply, handleFileUpload } = require("../flows/engine");
-const { BINDING_PRODUCTS } = require("../flows/productFlows");
+const flows = require("../flows/productFlows");
+const { MENU_SECTIONS } = flows;
 
-const PRODUCT_KEYS = new Set(BINDING_PRODUCTS.map((p) => p.key));
+// Any key defined in productFlows.js is a valid menu selection — new
+// products just need an entry added there, no change needed here.
+const PRODUCT_KEYS = new Set(Object.keys(flows).filter((k) => flows[k] && flows[k].questions));
 
 // Meta webhook verification (GET)
 router.get("/", (req, res) => {
@@ -96,15 +99,10 @@ async function routeTextOrCommand(phone, session, value) {
 }
 
 async function sendMainMenu(phone) {
-  // WhatsApp interactive list messages support up to 10 rows — fine for now
-  // with 6 binding products; if more products are added beyond that, this
-  // will need to split into sections or a two-step category menu.
-  await sendList(
-    phone,
-    "What would you like to order?",
-    "Choose",
-    BINDING_PRODUCTS.map((p) => ({ id: p.key, title: p.label.replace("Print with ", "") }))
-  );
+  // WhatsApp list messages cap at 10 rows TOTAL across all sections (not per
+  // section) — MENU_SECTIONS in productFlows.js is kept at exactly that
+  // limit; adding an 11th product needs a row trimmed/merged elsewhere too.
+  await sendList(phone, "What would you like to order?", "Choose", MENU_SECTIONS);
 }
 
 module.exports = router;

@@ -68,4 +68,18 @@ async function setOrderProcessing(orderId) {
   return wcClient().put(`/orders/${orderId}`, { status: "processing" });
 }
 
-module.exports = { uploadMedia, createOrder, setOrderProcessing };
+// Fetches a product's live price straight from WooCommerce rather than
+// hardcoding it in the bot — so a price change on the site is picked up
+// automatically. Used for the "simple" (non-configurator) products, where
+// the listed price IS the per-unit/per-pack price and the configurator is
+// switched off (_wcpc_enabled = 0 or absent).
+async function getProductPrice(productId) {
+  const res = await wcClient().get(`/products/${productId}`);
+  const price = parseFloat(res.data.price);
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error(`Product ${productId} has no valid live price (got "${res.data.price}").`);
+  }
+  return price;
+}
+
+module.exports = { uploadMedia, createOrder, setOrderProcessing, getProductPrice };

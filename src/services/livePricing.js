@@ -51,10 +51,17 @@ async function getNonce({ forceRefresh = false } = {}) {
   return fetchFreshNonce();
 }
 
-// params: { pid, sizeId, paperId, pages, qty, printId, coverBindingId, bindId }
-// printId defaults to 8 ("Single Side") — confirmed live that single vs double
-// doesn't change price for the binding-type products, and the bot has never
-// asked customers about this, so we keep that existing behavior.
+// params: { pid, sizeId, paperId, pages, qty, printId, coverBindingId, bindId,
+//           packingId, mode, extra }
+// printId defaults to 8 ("Single Side") for page_based products that don't
+// ask about it — confirmed live that single vs double doesn't change price
+// for the binding-type products, and the bot has never asked customers that.
+// Note some product categories reuse "print_id" for a completely different
+// choice (large-format products use 59=B&W/61=Color instead of 8=Single/
+// 9=Double) — callers pass whichever value is correct for that product.
+// `extra` is a plain object of any additional raw POST fields a particular
+// product's calculator needs (e.g. sticker's stk_width/stk_height/
+// wcpc_stk_shape) that don't fit the common named params above.
 async function getLivePrice(params) {
   const callOnce = async (nonce) => {
     const body = new URLSearchParams({
@@ -70,6 +77,12 @@ async function getLivePrice(params) {
     });
     if (params.coverBindingId) body.set("cover_binding_id", String(params.coverBindingId));
     if (params.bindId) body.set("bind_id", String(params.bindId));
+    if (params.packingId) body.set("packing_id", String(params.packingId));
+    if (params.extra) {
+      for (const [k, v] of Object.entries(params.extra)) {
+        if (v !== undefined && v !== null) body.set(k, String(v));
+      }
+    }
 
     const { data } = await axios.post(AJAX_URL, body.toString(), {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

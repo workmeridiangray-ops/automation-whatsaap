@@ -40,8 +40,16 @@ async function sendButtons(to, bodyText, buttons) {
   });
 }
 
-// Up to 10 rows, for menus with more options than buttons allow
-async function sendList(to, bodyText, buttonLabel, rows) {
+// Up to 10 rows per section, up to 10 sections, for menus with more options
+// than buttons allow. `rowsOrSections` can be either a flat array of rows
+// (wrapped into a single "Options" section, the original behavior) or an
+// array of { title, items } to render as multiple labeled sections.
+async function sendList(to, bodyText, buttonLabel, rowsOrSections) {
+  const isSections = Array.isArray(rowsOrSections) && rowsOrSections[0] && "items" in rowsOrSections[0];
+  const sections = isSections
+    ? rowsOrSections.map((s) => ({ title: s.title, rows: s.items }))
+    : [{ title: "Options", rows: rowsOrSections }];
+
   return client().post("/messages", {
     messaging_product: "whatsapp",
     to,
@@ -51,7 +59,7 @@ async function sendList(to, bodyText, buttonLabel, rows) {
       body: { text: bodyText },
       action: {
         button: buttonLabel,
-        sections: [{ title: "Options", rows }],
+        sections,
       },
     },
   });
