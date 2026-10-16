@@ -28,6 +28,9 @@ router.post("/", async (req, res) => {
 
     const phone = message.from;
     const session = getSession(phone);
+    console.log(
+      `Incoming [${message.type}] from ${phone} — session.step=${session.step}, productKey=${session.productKey}, answers=${JSON.stringify(session.answers)}`
+    );
 
     if (message.type === "text") {
       const text = message.text.body.trim();
@@ -39,10 +42,14 @@ router.post("/", async (req, res) => {
     } else if (message.type === "document" || message.type === "image") {
       const mediaId = message.document?.id || message.image?.id;
       if (session.step === "awaiting_file") {
+        console.log(`Accepting file upload, mediaId=${mediaId}`);
         await handleFileUpload(phone, session, mediaId);
       } else {
+        console.log(`Rejecting file upload — session.step was "${session.step}", not "awaiting_file"`);
         await sendText(phone, "I wasn't expecting a file right now — type \"menu\" to start an order.");
       }
+    } else {
+      console.log(`Unhandled message type: ${message.type}`);
     }
   } catch (err) {
     console.error("Webhook handling error:", err);
