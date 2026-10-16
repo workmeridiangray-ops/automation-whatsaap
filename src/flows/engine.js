@@ -18,8 +18,15 @@ async function askQuestion(phone, flowKey, question) {
   }
 }
 
+// File questions are deliberately excluded here: a file is never recorded in
+// `answers` while we're waiting for it (only after handleFileUpload runs), so
+// treating it like a normal pending question meant it was always returned as
+// "next" — handleFlowReply then just re-asked it via the generic branch and
+// never reached the code that sets session.step to "awaiting_file". Confirmed
+// live: file uploads were rejected with step stuck at "in_flow" even though
+// the bot had already sent the "upload your file" prompt.
 function nextUnansweredQuestion(flow, answers) {
-  return flow.questions.find((q) => !(q.key in answers));
+  return flow.questions.find((q) => q.type !== "file" && !(q.key in answers));
 }
 
 // Entry point: product selected from the main menu
