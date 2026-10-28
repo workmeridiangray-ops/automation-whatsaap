@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp Order Flow</title>
+<style>
+/* Layout: a phone-frame WhatsApp chat on the left, a plain-language "what you're paying for" rail on the right; stacks on mobile. Messages type themselves in one by one, looping. */
+:root{
+  --bg:#f4f3ef; --panel:#ffffff; --ink:#1b2320; --sub:#5b6660;
+  --accent:#128C7E; --accent-ink:#ffffff; --bubble-them:#ffffff; --bubble-me:#dcf8c6;
+  --line:#e4e1d8; --chip:#eef1ea; color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#13161a; --panel:#1b2024; --ink:#eef0ee; --sub:#9aa39c;
+    --accent:#25D366; --accent-ink:#06120a; --bubble-them:#242a2e; --bubble-me:#1f4030;
+    --line:#2b3237; --chip:#20262a; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#13161a; --panel:#1b2024; --ink:#eef0ee; --sub:#9aa39c;
+  --accent:#25D366; --accent-ink:#06120a; --bubble-them:#242a2e; --bubble-me:#1f4030;
+  --line:#2b3237; --chip:#20262a; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:'Inter',system-ui,-apple-system,Segoe UI,sans-serif;
+  padding-left:max(16px, env(safe-area-inset-left,0px));
+  padding-right:max(16px, env(safe-area-inset-right,0px));
+}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+.wrap{max-width:1040px;margin:0 auto;padding-block:40px 64px}
+.head{margin-bottom:28px}
+.eyebrow{font:600 12px/1 'Space Grotesk',sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(24px,3.4vw,38px)/1.15 'Space Grotesk',sans-serif;margin:8px 0 6px;text-wrap:balance}
+.lede{color:var(--sub);font-size:15px;max-width:60ch;margin:0}
+.grid{display:grid;grid-template-columns:360px 1fr;gap:28px;align-items:start;margin-top:32px}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+
+/* phone */
+.phone{
+  background:var(--panel); border:1px solid var(--line); border-radius:28px;
+  padding:14px; box-shadow:0 20px 50px -24px rgba(0,0,0,.35);
+}
+.phone-bar{display:flex;align-items:center;gap:10px;padding:6px 8px 14px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font:600 13px 'Space Grotesk',sans-serif;flex-shrink:0}
+.contact-name{font:600 14px/1.2 'Inter',sans-serif}
+.contact-sub{font-size:11px;color:var(--sub)}
+.chat{
+  height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+  padding:4px 4px 8px; scroll-behavior:smooth;
+}
+.chat::-webkit-scrollbar{width:0}
+.row{display:flex;opacity:0;transform:translateY(6px);animation:in .28s ease forwards}
+@keyframes in{to{opacity:1;transform:none}}
+.row.them{justify-content:flex-start}
+.row.me{justify-content:flex-end}
+.bubble{
+  max-width:78%; padding:8px 11px; border-radius:10px; font-size:13.5px; line-height:1.4;
+  white-space:pre-wrap; position:relative;
+}
+.row.them .bubble{background:var(--bubble-them);border:1px solid var(--line);border-top-left-radius:3px}
+.row.me .bubble{background:var(--bubble-me);color:var(--ink);border-top-right-radius:3px}
+.time{display:block;font-size:10px;color:var(--sub);margin-top:4px;text-align:right}
+.list-card{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12.5px}
+.list-card .opt{padding:5px 0;border-top:1px solid var(--line)}
+.list-card .opt:first-child{border-top:none}
+.typing{display:flex;gap:3px;padding:10px 12px}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--sub);opacity:.5;animation:bounce 1s infinite}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-4px);opacity:1}}
+.replay{
+  margin-top:12px;width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);font:600 13px 'Inter',sans-serif;cursor:pointer;
+}
+.replay:hover{border-color:var(--accent)}
+
+/* explainer rail */
+.rail{display:flex;flex-direction:column;gap:14px}
+.step{
+  background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
+  display:flex; gap:14px; align-items:flex-start; opacity:.35; transition:opacity .35s ease, border-color .35s ease;
+}
+.step.active{opacity:1;border-color:var(--accent)}
+.step-num{
+  font:700 13px 'Space Grotesk',sans-serif; color:var(--accent-ink); background:var(--accent);
+  width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.step-body h3{margin:0 0 3px;font:600 14px/1.3 'Inter',sans-serif}
+.step-body p{margin:0;font-size:12.5px;color:var(--sub);line-height:1.5}
+footer{margin-top:28px;font-size:12px;color:var(--sub)}
+</style>
+
+
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="eyebrow">What you're paying for</div>
+    <h1>Menu to dispatch &mdash; no human in the loop</h1>
+    <p class="lede">The exact message sequence a customer sees: the opening menu, placing an order, getting a live price and payment link, and tracking it afterward. Nothing here is typed in by hand.</p>
+  </div>
+
+  <div class="grid">
+    <div class="phone">
+      <div class="phone-bar">
+        <div class="avatar">OP</div>
+        <div>
+          <div class="contact-name">onlineprintingz.in</div>
+          <div class="contact-sub" id="status">online</div>
+        </div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <button class="replay" id="replay">&#8635; Replay conversation</button>
+    </div>
+
+    <div class="rail" id="rail"></div>
+  </div>
+
+  <footer>Simulated conversation for demo purposes &middot; actual response times are near-instant</footer>
+</div>
+
+<script>
+(function(){
+  var chat = document.getElementById('chat');
+  var railEl = document.getElementById('rail');
+  var replayBtn = document.getElementById('replay');
+  var statusEl = document.getElementById('status');
+
+  var steps = [
+    {title:"Customer opens the menu", body:"Place an Order, Track an Order, or Connect with an Agent — the bot greets every customer with these three choices, no typing required to get started."},
+    {title:"Customer picks a product", body:"No app to download, no account to create — just a few taps in the chat they already use."},
+    {title:"Bot asks exactly what's needed", body:"Size, paper, pages, binding, copies — only the questions this product actually needs."},
+    {title:"Price comes from the live website", body:"The bot calls the same pricing engine the website uses, in real time. If a price changes on the site, the bot's answer changes with it — automatically."},
+    {title:"Payment link, generated on the spot", body:"A real Razorpay payment link, tied to this exact order, sent straight into the chat."},
+    {title:"Order is placed the moment payment clears", body:"No one re-types the order into WooCommerce. It's created automatically, ready for production."},
+    {title:"Order tracking, on demand", body:"Any time after that, the customer types \"menu\" and picks Track an Order to see live status — no phone call, no \"where's my order\" email."}
+  ];
+
+  steps.forEach(function(s, i){
+    var div = document.createElement('div');
+    div.className = 'step';
+    div.id = 'step-' + i;
+    div.innerHTML = '<div class="step-num">' + (i+1) + '</div><div class="step-body"><h3>' + s.title + '</h3><p>' + s.body + '</p></div>';
+    railEl.appendChild(div);
+  });
+
+  // script: {who: 'them'|'me', text, list?:[...], step}
+  var script = [
+    {who:'them', text:"Welcome to onlineprintingz.in 👋\nHow can we help today?", list:["📦 Place an Order","🔍 Track an Order","💬 Connect with an Agent"], step:0},
+    {who:'me', text:"📦 Place an Order", step:0},
+    {who:'them', text:"Which category?", list:["Binding","Printing","Stationery","Marketing","Specialty"], step:1},
+    {who:'me', text:"Binding", step:1},
+    {who:'them', text:"Choose a product:", list:["Perfect Binding","Soft Binding","Wireo Binding","Spiral Binding"], step:1},
+    {who:'me', text:"Perfect Binding", step:1},
+    {who:'them', text:"Great — Print with Perfect Binding. A few quick questions to get you an exact price.", step:1},
+    {who:'them', list:["A4","A3","A5"], label:"Choose a size:", step:2},
+    {who:'me', text:"A4", step:2},
+    {who:'them', list:["Natural","White"], label:"Choose paper:", step:2},
+    {who:'me', text:"White", step:2},
+    {who:'them', text:"How many pages?", step:2},
+    {who:'me', text:"300", step:2},
+    {who:'them', text:"How many copies?", step:2},
+    {who:'me', text:"50", step:2},
+    {who:'them', text:"Please upload your file.", step:2},
+    {who:'me', text:"📎 manuscript_final.pdf", step:2},
+    {who:'them', text:"Your order — Perfect Binding\nA4 · White · 300pg · 50 copies\n\nTotal: ₹10,500\n\nGenerating your payment link...", step:3},
+    {who:'them', text:"Pay here to confirm your order:\nrazorpay.me/onlineprintingz/8f2k1", step:4},
+    {who:'me', text:"✅ Paid", step:4},
+    {who:'them', text:"✅ Payment received — order #4821 confirmed and in production. We'll update you on dispatch.", step:5},
+    {who:'me', text:"menu", step:6},
+    {who:'them', text:"How can we help today?", list:["📦 Place an Order","🔍 Track an Order","💬 Connect with an Agent"], step:6},
+    {who:'me', text:"🔍 Track an Order", step:6},
+    {who:'them', text:"Please share your order number.", step:6},
+    {who:'me', text:"#4821", step:6},
+    {who:'them', text:"Order #4821 — Perfect Binding\nStatus: 🖨️ In production\nExpected dispatch: 30 Oct", step:6},
+    {who:'them', text:"📦 Update: Order #4821 has been dispatched!\nTracking ID: IN00482177X", step:6}
+  ];
+
+  function fmtTime(){
+    var d = new Date();
+    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+
+  function setActiveStep(i){
+    for (var k=0;k<steps.length;k++){
+      document.getElementById('step-'+k).classList.toggle('active', k===i);
+    }
+  }
+
+  function addTyping(who){
+    var row = document.createElement('div');
+    row.className = 'row ' + who;
+    var b = document.createElement('div');
+    b.className = 'bubble typing';
+    b.innerHTML = '<span></span><span></span><span></span>';
+    row.appendChild(b);
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+    return row;
+  }
+
+  function addMessage(msg){
+    var row = document.createElement('div');
+    row.className = 'row ' + msg.who;
+    var b = document.createElement('div');
+    b.className = 'bubble';
+    var text = document.createElement('div');
+    text.textContent = msg.text || msg.label || '';
+    b.appendChild(text);
+    if (msg.list){
+      var card = document.createElement('div');
+      card.className = 'list-card';
+      msg.list.forEach(function(opt){
+        var o = document.createElement('div');
+        o.className = 'opt';
+        o.textContent = opt;
+        card.appendChild(o);
+      });
+      b.appendChild(card);
+    }
+    var time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = fmtTime();
+    b.appendChild(time);
+    row.appendChild(b);
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  var playing = false;
+  var timers = [];
+
+  function clearAll(){
+    timers.forEach(clearTimeout);
+    timers = [];
+    chat.innerHTML = '';
+    setActiveStep(-1);
+  }
+
+  function play(){
+    if (playing) return;
+    playing = true;
+    clearAll();
+    var t = 300;
+    script.forEach(function(msg, idx){
+      var delay = msg.who === 'them' ? 650 : 250;
+      timers.push(setTimeout(function(){
+        setActiveStep(msg.step);
+        if (msg.who === 'them'){
+          var typingRow = addTyping('them');
+          timers.push(setTimeout(function(){
+            typingRow.remove();
+            addMessage(msg);
+          }, 550));
+        } else {
+          addMessage(msg);
+        }
+      }, t));
+      t += delay + (msg.who === 'them' ? 550 : 0);
+    });
+    timers.push(setTimeout(function(){
+      playing = false;
+      timers.push(setTimeout(play, 2600));
+    }, t + 400));
+  }
+
+  replayBtn.addEventListener('click', function(){
+    playing = false;
+    play();
+  });
+
+  play();
+})();
+</script>
+
+</body>
+</html>
